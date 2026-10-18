@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vessel 750 — scroll story</title>
+<script type="importmap">
+{
+  "imports": { "three": "https://unpkg.com/three@0.184.0/build/three.module.js" },
+  "integrity": {
+    "https://unpkg.com/three@0.184.0/build/three.module.js": "sha384-8FCZ1eVO6it4+pbec2aDtnTrwjWXZLJRC+MAGCIPDgsYnUrl/E0A2YlF8ioMKI/J",
+    "https://unpkg.com/three@0.184.0/build/three.core.js": "sha384-dw2ooPewaEIrAgl6oFDBmmBWCE9oW9LxRGcfwZ0hLvEprzo202wXl7vCYHRlSnOT"
+  }
+}
+</script>
+<style>
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+  canvas{display:block}
+  #still{position:fixed;left:0;top:0;width:800px;height:1000px;display:none;z-index:2}
+</style>
+</head>
+<body>
+<img id="still" alt="">
+<script type="module">
+import * as THREE from 'three';
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 50);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d9d4, 1.0));
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
+key.position.set(0.18, 1, 0.3); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0002;
+Object.assign(key.shadow.camera, { left: -0.6, right: 0.6, top: 0.6, bottom: -0.6, near: 0.05, far: 3 });
+scene.add(key, key.target);
+const fillL = new THREE.DirectionalLight(0xffffff, 0.5); fillL.position.set(-5, 3, -4); scene.add(fillL);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.ShadowMaterial({ opacity: 0.14 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+{
+  const env = new THREE.Scene();
+  env.add(new THREE.Mesh(new THREE.BoxGeometry(10, 6, 10), new THREE.MeshBasicMaterial({ color: 0xe4e7ea, side: THREE.BackSide })));
+  const box = (w, hh, x, y, z, ry, c) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, hh), new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }));
+    m.position.set(x, y, z); m.rotation.y = ry; env.add(m);
+  };
+  box(1.2, 4.5, -4.9, 0.5, 0.5, Math.PI / 2, 0xffffff);
+  box(0.9, 4.5, 4.9, 0.3, -1.2, -Math.PI / 2, 0x141616);
+  box(3.5, 1.4, 0, 0.8, -4.9, 0, 0x2a2d30);
+  box(1.0, 4.5, 2.5, 0.3, 4.9, Math.PI, 0x1a1c1d);
+  const top = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  top.position.y = 2.95; top.rotation.x = Math.PI / 2; env.add(top);
+  const pm = new THREE.PMREMGenerator(renderer);
+  scene.environment = pm.fromScene(env, 0.03).texture; pm.dispose();
+}
+
+const V = (x, y) => new THREE.Vector2(x, y), SEG = 96;
+const canvasTex = (w, hh, draw, repeat) => {
+  const c = document.createElement('canvas'); c.width = w; c.height = hh; draw(c.getContext('2d'), w, hh);
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8;
+  if (repeat) t.repeat.set(...repeat); return t;
+};
+const rnd = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+const brushed = canvasTex(1024, 256, (g, w, hh) => {
+  g.fillStyle = '#808080'; g.fillRect(0, 0, w, hh);
+  for (let i = 0; i < 2600; i++) {
+    const v = 90 + rnd() * 80 | 0; g.strokeStyle = `rgba(${v},${v},${v},${0.15 + rnd() * 0.35})`;
+    g.lineWidth = rnd() * 1.2 + 0.3; const y = rnd() * hh, x = rnd() * w;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 80 + rnd() * 400, y + (rnd() - 0.5) * 0.6); g.stroke();
+  }
+});
+const grain = (n, lo, hi) => canvasTex(512, 512, (g, w, hh) => {
+  const d = g.createImageData(w, hh);
+  for (let i = 0; i < d.data.length; i += 4) { const v = lo + rnd() * (hi - lo); d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  g.putImageData(d, 0, 0);
+}, [n, n]);
+const capGrain = grain(4, 100, 160), siliconeGrain = grain(3, 80, 175);
+const mat = (name, o) => { const m = new THREE.MeshPhysicalMaterial(o); m.name = name; return m; };
+const glass = mat('clear_shell', { color: 0xffffff, roughness: 0.03, ior: 1.56, clearcoat: 1, clearcoatRoughness: 0.02, specularIntensity: 1, envMapIntensity: 1.5, transparent: true, opacity: 0.12, depthWrite: false, side: THREE.DoubleSide });
+const steel = mat('brushed_steel', { color: 0xd4d7da, metalness: 1, roughness: 0.28, roughnessMap: brushed, bumpMap: brushed, bumpScale: 0.15, anisotropy: 0.8, envMapIntensity: 1.1 });
+const capMat = mat('cap_soft_touch', { color: 0x161718, roughness: 0.62, roughnessMap: capGrain, bumpMap: capGrain, bumpScale: 0.25, sheen: 0.35, sheenRoughness: 0.8, sheenColor: 0x3a3d40, envMapIntensity: 0.6 });
+const accent = mat('accent_loop', { color: 0x1c95e6, roughness: 0.38, clearcoat: 0.4, clearcoatRoughness: 0.35, bumpMap: capGrain, bumpScale: 0.1, envMapIntensity: 0.7 });
+const silicone = mat('silicone_boot', { color: 0x1d1f20, roughness: 0.82, roughnessMap: siliconeGrain, bumpMap: siliconeGrain, bumpScale: 0.6, sheen: 0.5, sheenRoughness: 0.9, sheenColor: 0x45484c, envMapIntensity: 0.45 });
+const liquid = mat('water', { color: 0x1c95e6, roughness: 0.02, ior: 1.33, specularIntensity: 1, envMapIntensity: 1.3, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+const liquidTop = mat('water_surface', { color: 0x8fcdf5, roughness: 0.01, ior: 1.33, specularIntensity: 1, envMapIntensity: 2.2, clearcoat: 1, clearcoatRoughness: 0, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide });
+
+const VARIANTS = {
+  ink:   { cap: 0x161718, capSheen: 0x3a3d40, loop: 0x1c95e6, boot: 0x1d1f20, bootSheen: 0x45484c },
+  paper: { cap: 0xeceae4, capSheen: 0xffffff, loop: 0x161718, boot: 0xe2e0da, bootSheen: 0xffffff },
+  tide:  { cap: 0x1c95e6, capSheen: 0x8fd0ff, loop: 0xf3f3ef, boot: 0x1784cc, bootSheen: 0x8fd0ff },
+};
+const tgt = { cap: new THREE.Color(), capSheen: new THREE.Color(), loop: new THREE.Color(), boot: new THREE.Color(), bootSheen: new THREE.Color() };
+const slots = { cap: [capMat, 'color'], capSheen: [capMat, 'sheenColor'], loop: [accent, 'color'], boot: [silicone, 'color'], bootSheen: [silicone, 'sheenColor'] };
+let variant = 'ink';
+const setVariant = (id, instant) => {
+  const v = VARIANTS[id]; if (!v) return; variant = id;
+  for (const k in tgt) { tgt[k].set(v[k]); if (instant) slots[k][0][slots[k][1]].copy(tgt[k]); }
+};
+setVariant('ink', true);
+
+const rig = new THREE.Group(); scene.add(rig);
+const bottle = new THREE.Group(); bottle.position.y = -0.132; rig.add(bottle);
+const capG = new THREE.Group(), bootG = new THREE.Group(); bottle.add(capG, bootG);
+const add = (name, geo, m, setup, parent = bottle) => {
+  const mesh = new THREE.Mesh(geo, m); mesh.name = name; mesh.castShadow = mesh.receiveShadow = !m.transparent;
+  setup && setup(mesh); parent.add(mesh); return mesh;
+};
+add('shell', new THREE.LatheGeometry([V(0, 0.003), V(0.030, 0.003), V(0.0345, 0.005), V(0.0365, 0.010), V(0.0370, 0.018), V(0.0370, 0.170), V(0.0366, 0.180), V(0.0345, 0.194), V(0.0310, 0.206), V(0.0282, 0.214), V(0.0268, 0.219), V(0.0264, 0.2225)], SEG), glass, m => { m.renderOrder = 3; });
+{
+  const Y0 = 0.032, Y1 = 0.164, R = 0.03712, CAP = 0.0105, len = Y1 - Y0, ang = (CAP * 1.5) / R, PX = 4000;
+  const cw = Math.round(CAP * 1.5 * PX * 4), ch = Math.round(len * PX * 4);
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const g = c.getContext('2d'); g.translate(cw / 2, 0); g.rotate(Math.PI / 2);
+  const fs = Math.round(CAP * PX * 4 * 1.38);
+  g.font = `500 ${fs}px "Helvetica Neue", Helvetica, Arial, sans-serif`; g.letterSpacing = `${Math.round(fs * 0.42)}px`;
+  g.fillStyle = '#0d0e0e'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('VESSEL', ch / 2 + fs * 0.21, 0);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  const print = new THREE.MeshPhysicalMaterial({ map: tex, transparent: true, roughness: 0.45, clearcoat: 0.6, clearcoatRoughness: 0.2, depthWrite: false });
+  add('wordmark', new THREE.CylinderGeometry(R, R, len, 32, 1, true, -ang / 2, ang), print, m => { m.position.y = (Y0 + Y1) / 2; m.renderOrder = 4; });
+}
+const LR = 0.0340, Y_WALL = 0.020;
+add('liquid_bottom', new THREE.LatheGeometry([V(0, 0.006), V(0.028, 0.006), V(0.0325, 0.008), V(0.0338, 0.013), V(LR, Y_WALL)], 64), liquid, m => { m.renderOrder = 1; });
+const RINGS = 14, SEGS = 64, WROWS = 10;
+const surfGeo = new THREE.BufferGeometry(), surfPos = new Float32Array((1 + RINGS * SEGS) * 3), surfXZ = [[0, 0]];
+for (let k = 1; k <= RINGS; k++) for (let s = 0; s < SEGS; s++) { const a = (s / SEGS) * Math.PI * 2, r = LR * 0.998 * k / RINGS; surfXZ.push([Math.cos(a) * r, Math.sin(a) * r]); }
+const sIdx = [];
+for (let s = 0; s < SEGS; s++) sIdx.push(0, 1 + (s + 1) % SEGS, 1 + s);
+for (let k = 1; k < RINGS; k++) for (let s = 0; s < SEGS; s++) { const a0 = 1 + (k - 1) * SEGS + s, a1 = 1 + (k - 1) * SEGS + (s + 1) % SEGS; sIdx.push(a0, a1, a0 + SEGS, a1, a1 + SEGS, a0 + SEGS); }
+surfGeo.setAttribute('position', new THREE.BufferAttribute(surfPos, 3)); surfGeo.setIndex(sIdx);
+add('liquid_top', surfGeo, liquidTop, m => { m.renderOrder = 2; m.frustumCulled = false; });
+const wallGeo = new THREE.BufferGeometry(), wallPos = new Float32Array(SEGS * (WROWS + 1) * 3), wallNrm = new Float32Array(SEGS * (WROWS + 1) * 3), wIdx = [];
+for (let s = 0; s < SEGS; s++) {
+  const a = (s / SEGS) * Math.PI * 2;
+  for (let r = 0; r <= WROWS; r++) { const o = (s * (WROWS + 1) + r) * 3; wallPos[o] = Math.cos(a) * LR; wallPos[o + 2] = Math.sin(a) * LR; wallNrm[o] = Math.cos(a); wallNrm[o + 2] = Math.sin(a); }
+  const s1 = (s + 1) % SEGS;
+  for (let r = 0; r < WROWS; r++) { const p0 = s * (WROWS + 1) + r, p1 = s1 * (WROWS + 1) + r; wIdx.push(p0, p0 + 1, p1, p1, p0 + 1, p1 + 1); }
+}
+wallGeo.setAttribute('position', new THREE.BufferAttribute(wallPos, 3)); wallGeo.setAttribute('normal', new THREE.BufferAttribute(wallNrm, 3)); wallGeo.setIndex(wIdx);
+add('liquid_wall', wallGeo, liquid, m => { m.renderOrder = 1; m.frustumCulled = false; });
+add('base_boot', new THREE.LatheGeometry([V(0, 0), V(0.0335, 0), V(0.0372, 0.0025), V(0.0380, 0.007), V(0.0380, 0.023), V(0.0376, 0.0245), V(0.0372, 0.0245), V(0.0372, 0.004), V(0, 0.004)], SEG), silicone, null, bootG);
+for (let i = 0; i < 3; i++) add(`boot_rib_${i + 1}`, new THREE.TorusGeometry(0.0381, 0.0006, 8, SEG), silicone, m => { m.rotation.x = Math.PI / 2; m.position.y = 0.010 + i * 0.0045; }, bootG);
+add('neck_ring', new THREE.LatheGeometry([V(0.0258, 0.2215), V(0.0270, 0.2215), V(0.0276, 0.2225), V(0.0278, 0.2300), V(0.0274, 0.2318), V(0.0258, 0.2318)], SEG), steel);
+add('cap', new THREE.LatheGeometry([V(0.0272, 0.2320), V(0.0286, 0.2322), V(0.0292, 0.2338), V(0.0292, 0.2565), V(0.0287, 0.2600), V(0.0272, 0.2618), V(0.0200, 0.2626), V(0, 0.2628)], SEG), capMat, null, capG);
+const ribGeo = new THREE.BoxGeometry(0.0016, 0.0150, 0.0012);
+for (let i = 0; i < 48; i++) { const a = (i / 48) * Math.PI * 2; add(`cap_rib_${i + 1}`, ribGeo, capMat, m => { m.position.set(Math.cos(a) * 0.0296, 0.2425, Math.sin(a) * 0.0296); m.rotation.y = -a; }, capG); }
+add('cap_trim', new THREE.TorusGeometry(0.02925, 0.00045, 8, SEG), steel, m => { m.rotation.x = Math.PI / 2; m.position.y = 0.2512; }, capG);
+add('carry_loop', new THREE.TorusGeometry(0.0145, 0.0034, 24, 64, Math.PI), accent, m => { m.position.y = 0.2632; }, capG);
+for (const s of [-1, 1]) add(`loop_pivot_${s}`, new THREE.CylinderGeometry(0.0046, 0.0050, 0.0030, 32), steel, m => { m.position.set(s * 0.0145, 0.2638, 0); }, capG);
+
+// ---- Pose: parent posts a target; we glide toward it ----
+const REST = { fx: 0, lift: 0, rx: 0, ry: 0.3, rz: 0, dist: 0.62, ty: 0.13, cap: 0, cs: 0, boot: 0, fill: 0.14, px: 0, py: 0 };
+const target = { ...REST }, cur = { ...REST };
+let shakeT = -10, shakeAmp = 1, still = false;
+// Cursor drag: spin keeps momentum, tilt springs back
+const user = { ry: 0, rx: 0, rz: 0, vy: 0, vx: 0, dragging: false };
+
+// ---- Modal sloshing (cylindrical tank), forced by the bottle's real motion ----
+const NU = 1.0e-6, R_T = LR;
+const besselJ = (m, x) => { let s = 0; const N = 256; for (let i = 0; i < N; i++) { const t = (i + 0.5) * Math.PI / N; s += Math.cos(m * t - x * Math.sin(t)); } return s / N; };
+const MODES = [[1, 1.8412], [1, 5.3314], [1, 8.5363], [2, 3.0542], [2, 6.7061], [0, 3.8317], [0, 7.0156], [3, 4.2012]]
+  .map(([m, j]) => ({ m, k: j / R_T, ax: 0, az: 0, vx: 0, vz: 0, part: m === 1 ? 2 * R_T / (j * j - 1) : 0, norm: besselJ(m, j) }));
+const K11 = MODES[0].k;
+for (const md of MODES) {
+  md.c = new Float32Array(surfXZ.length); md.s = new Float32Array(surfXZ.length);
+  surfXZ.forEach(([x, z], v) => { const r = Math.hypot(x, z), th = Math.atan2(z, x), radial = besselJ(md.m, md.k * r) / md.norm; md.c[v] = radial * Math.cos(md.m * th); md.s[v] = radial * Math.sin(md.m * th); });
+}
+function modalStep(dt, sx, sz, G, h) {
+  const d1x = MODES[0].ax - MODES[0].part * sx, d1z = MODES[0].az - MODES[0].part * sz;
+  for (const md of MODES) {
+    const w2 = G * md.k * Math.tanh(md.k * h), w = Math.sqrt(w2);
+    const steep = md.k * Math.hypot(md.ax - md.part * sx, md.az - md.part * sz);
+    const zeta = 0.55 * md.k * Math.sqrt(NU / w) + Math.min(0.35, 2.5 * steep * steep);
+    let tx = 0, tz = 0;
+    if (md.m === 1) { tx = md.part * sx; tz = md.part * sz; }
+    else if (md === MODES[3]) { tx = 0.3 * K11 * (d1x * d1x - d1z * d1z); tz = 0.3 * K11 * (2 * d1x * d1z); }
+    else if (md === MODES[5]) { tx = 0.125 * K11 * (d1x * d1x + d1z * d1z); }
+    md.vx += dt * (-w2 * (md.ax - tx) - 2 * zeta * w * md.vx); md.vz += dt * (-w2 * (md.az - tz) - 2 * zeta * w * md.vz);
+    md.ax += dt * md.vx; md.az += dt * md.vz;
+  }
+}
+const kickModes = s => { for (const md of MODES) if (md.m !== 1) { const w = Math.sqrt(9.81 * md.k); md.vx += (Math.random() - 0.5) * s * w * 0.0015; md.vz += (Math.random() - 0.5) * s * w * 0.0015; } };
+
+const cw = new THREE.Vector3(), p1 = new THREE.Vector3(), p2 = new THREE.Vector3(), acc = new THREE.Vector3(), raw = new THREE.Vector3();
+const g = new THREE.Vector3(), qw = new THREE.Quaternion();
+let primed = false, last = performance.now() / 1000, simAcc = 0;
+rig.rotation.order = 'ZXY';
+
+function updateSurface(sx, sz, fill, flat) {
+  const lo = Y_WALL + 0.004, hi = 0.192;
+  for (let v = 0; v < surfXZ.length; v++) {
+    const [x, z] = surfXZ[v]; let y = fill;
+    if (!flat) { y += sx * x + sz * z; for (const md of MODES) y += (md.ax - md.part * sx) * md.c[v] + (md.az - md.part * sz) * md.s[v]; }
+    surfPos[v * 3] = x; surfPos[v * 3 + 1] = Math.min(hi, Math.max(lo, y)); surfPos[v * 3 + 2] = z;
+  }
+  surfGeo.attributes.position.needsUpdate = true; surfGeo.computeVertexNormals();
+  const outer = 1 + (RINGS - 1) * SEGS;
+  for (let s = 0; s < SEGS; s++) { const top = surfPos[(outer + s) * 3 + 1]; for (let r = 0; r <= WROWS; r++) wallPos[(s * (WROWS + 1) + r) * 3 + 1] = Y_WALL + (top - Y_WALL) * (r / WROWS); }
+  wallGeo.attributes.position.needsUpdate = true;
+}
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / Math.max(1, innerHeight); camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+
+function frame() {
+  requestAnimationFrame(frame);
+  if (still) return;
+  const now = performance.now() / 1000, dt = Math.min(0.05, Math.max(0.001, now - last)); last = now;
+  const k = 1 - Math.exp(-dt * 4.2);
+  for (const key in target) cur[key] += (target[key] - cur[key]) * (key === 'px' || key === 'py' ? 1 - Math.exp(-dt * 3) : k);
+  for (const kk in tgt) slots[kk][0][slots[kk][1]].lerp(tgt[kk], 1 - Math.exp(-dt * 5));
+
+  const aspect = camera.aspect, narrow = aspect < 0.9, tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const halfW = cur.dist * tanH * aspect;
+  const ts = now - shakeT, shk = ts >= 0 && ts < 2.5 ? shakeAmp * Math.exp(-ts * 2.6) : 0;
+  rig.position.set((narrow ? 0 : cur.fx) * halfW, 0.132 + cur.lift + Math.sin(now * 1.1) * 0.003, 0);
+  if (!user.dragging) {
+    user.ry += user.vy; user.vy *= Math.pow(0.94, dt * 60);
+    user.rx += user.vx; user.vx *= Math.pow(0.85, dt * 60);
+    const sp = 1 - Math.exp(-dt * 3.5); user.rx -= user.rx * sp; user.rz -= user.rz * sp;
+  }
+  rig.rotation.set(cur.rx + user.rx + cur.py * 0.12 + shk * 0.18 * Math.sin(ts * 14), cur.ry + user.ry + cur.px * 0.35 + Math.sin(now * 0.4) * 0.05, cur.rz + user.rz + shk * 0.12 * Math.sin(ts * 11 + 0.7));
+  capG.position.y = cur.cap; capG.rotation.y = cur.cs;
+  bootG.position.y = -cur.boot;
+  const ty = cur.ty - (narrow ? cur.dist * tanH * 0.38 : 0);
+  camera.position.set(0, ty + cur.dist * 0.14, cur.dist); camera.lookAt(0, ty, 0);
+  key.position.set(rig.position.x + 0.18, 1, 0.3); key.target.position.set(rig.position.x, 0, 0);
+
+  rig.updateMatrixWorld(true);
+  bottle.localToWorld(cw.set(0, cur.fill * 0.5, 0));
+  if (!primed) { p1.copy(cw); p2.copy(cw); primed = true; }
+  raw.copy(cw).addScaledVector(p1, -2).add(p2).divideScalar(dt * dt);
+  if (raw.length() > 25) raw.setLength(25);
+  acc.lerp(raw, 0.3); p2.copy(p1); p1.copy(cw);
+  bottle.getWorldQuaternion(qw);
+  g.set(-acc.x, -9.81 - acc.y, -acc.z).applyQuaternion(qw.invert());
+  const G = Math.max(0.5, -g.y), depth = Math.max(0.01, cur.fill - 0.006);
+  const sx = THREE.MathUtils.clamp(g.x / G, -3, 3), sz = THREE.MathUtils.clamp(g.z / G, -3, 3);
+  simAcc += dt;
+  while (simAcc >= 0.0005) { modalStep(0.0005, sx, sz, G, depth); simAcc -= 0.0005; }
+  if (Math.random() < 0.02) kickModes(0.02);
+  updateSurface(sx, sz, cur.fill, false);
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+// Product still: upright, flat water, 800×1000, baked onto the card tone
+function renderStill(id) {
+  setVariant(id, true);
+  rig.position.set(0, 0.132, 0); rig.rotation.set(0, 0.32, 0); capG.position.y = 0; capG.rotation.y = 0; bootG.position.y = 0;
+  updateSurface(0, 0, 0.14, true);
+  key.position.set(0.18, 1, 0.3); key.target.position.set(0, 0, 0);
+  const cam = new THREE.PerspectiveCamera(30, 0.8, 0.01, 50); cam.position.set(0.1, 0.2, 0.6); cam.lookAt(0, 0.128, 0);
+  renderer.setClearColor(0xe8e8e3, 1); renderer.setPixelRatio(1); renderer.setSize(800, 1000, false);
+  rig.updateMatrixWorld(true); renderer.render(scene, cam);
+  const url = renderer.domElement.toDataURL('image/png');
+  renderer.setClearColor(0x000000, 0); renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2)); resize();
+  return url;
+}
+
+addEventListener('message', ev => {
+  const d = ev.data || {};
+  if (d.vessel === 'pose') Object.assign(target, d.pose);
+  else if (d.vessel === 'drag') {
+    if (d.phase === 'start') { user.dragging = true; user.vy = user.vx = 0; }
+    else if (d.phase === 'end') user.dragging = false;
+    else {
+      const ay = d.dx * 9, ax = d.dy * 4;
+      user.ry += ay; user.vy = user.vy * 0.4 + ay * 0.6;
+      user.rx = Math.max(-0.7, Math.min(0.7, user.rx + ax)); user.vx = ax * 0.3;
+      user.rz = Math.max(-0.5, Math.min(0.5, user.rz - d.dx * 2.2));
+    }
+  }
+  else if (d.vessel === 'variant') setVariant(d.id);
+  else if (d.vessel === 'slosh') { shakeT = performance.now() / 1000; shakeAmp = d.soft ? 0.45 : 1; kickModes(d.soft ? 0.4 : 1); }
+  else if (d.vessel === 'still') { const img = document.getElementById('still'); if (img.dataset.id !== d.id) { still = true; img.src = renderStill(d.id); img.dataset.id = d.id; } img.style.display = 'block'; img.style.transform = `translateY(${-(d.oy || 0)}px)`; }
+});
+if (parent !== window) parent.postMessage({ vessel: 'ready' }, '*');
+</script>
+</body>
+</html>
